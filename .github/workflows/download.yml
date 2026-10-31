@@ -1,0 +1,78 @@
+name: download
+run-name: job ${{ inputs.job_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:   { description: job id, required: true }
+      url:      { description: YouTube URL, required: true }
+      mode:     { description: video or audio, required: true, default: video }
+      format:   { description: output container/codec, required: true, default: mp4 }
+      quality:  { description: best or max height, required: true, default: best }
+      playlist: { description: 'true = whole playlist', required: true, default: 'false' }
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      IN_URL: ${{ inputs.url }}
+      IN_MODE: ${{ inputs.mode }}
+      IN_FORMAT: ${{ inputs.format }}
+      IN_QUALITY: ${{ inputs.quality }}
+      IN_PLAYLIST: ${{ inputs.playlist }}
+      GH_TOKEN: ${{ github.token }}
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+    steps:
+      - name: Fetch tools
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'tools'
+          New-Item -ItemType Directory $d | Out-Null
+          Invoke-WebRequest https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe -OutFile "$d\yt-dlp.exe"
+          Invoke-WebRequest https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip -OutFile "$d\ff.zip"
+          Expand-Archive "$d\ff.zip" "$d\ff"
+          Copy-Item "$d\ff\*\bin\ffmpeg.exe", "$d\ff\*\bin\ffprobe.exe" $d
+          $d | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & "$d\yt-dlp.exe" --version; & "$d\ffmpeg.exe" -version | Select-Object -First 1
+
+      - name: Download
+        shell: pwsh
+        run: |
+          # Inputs arrive only through env vars and are validated here, never pasted into code.
+          if ($env:IN_URL -notmatch '^https://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/\S+$') { throw 'Invalid URL' }
+          if ($env:IN_FORMAT -notmatch '^(mp4|mkv|webm|mp3|m4a|opus|flac|wav)$') { throw 'Invalid format' }
+          if ($env:IN_QUALITY -notmatch '^(best|\d{3,4})$') { throw 'Invalid quality' }
+          New-Item -ItemType Directory out | Out-Null
+          $a = @('--no-warnings', '--newline', '--embed-metadata', '--restrict-filenames',
+                 '-o', 'out/%(title).100B [%(id)s].%(ext)s')
+          $a += $(if ($env:IN_PLAYLIST -eq 'true') { '--yes-playlist' } else { '--no-playlist' })
+          if ($env:IN_MODE -eq 'audio') {
+            $a += @('-x', '--audio-format', $env:IN_FORMAT, '--audio-quality', '0')
+          } else {
+            $h = $env:IN_QUALITY
+            $f = $(if ($h -eq 'best') { 'bv*+ba/b' } else { "bv*[height<=$h]+ba/b[height<=$h]" })
+            $a += @('-f', $f, '--merge-output-format', $env:IN_FORMAT)
+          }
+          if ($env:YT_COOKIES) {
+            [IO.File]::WriteAllText("$PWD\cookies.txt", $env:YT_COOKIES)
+            $a += @('--cookies', 'cookies.txt')
+          }
+          yt-dlp @a $env:IN_URL
+          if ($LASTEXITCODE -ne 0) { throw "yt-dlp exit $LASTEXITCODE" }
+          Remove-Item cookies.txt -ErrorAction SilentlyContinue
+
+      - name: Package and publish
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem out -File -Recurse | Where-Object { $_.Extension -notin '.part', '.ytdl' })
+          if ($files.Count -eq 0) { throw 'No output files' }
+          if ($files.Count -eq 1) {
+            $asset = $files[0].FullName
+          } else {
+            $asset = Join-Path $PWD "playlist-$env:JOB_ID.zip"
+            Compress-Archive -Path ($files.FullName) -DestinationPath $asset -CompressionLevel NoCompression
+          }
+          if ((Get-Item $asset).Length -gt 1.9GB) { throw 'File exceeds the 2 GB release asset limit' }
+          gh release create "job-$env:JOB_ID" $asset --title "job-$env:JOB_ID" --notes "Temporary. Auto-deleted after a few hours."

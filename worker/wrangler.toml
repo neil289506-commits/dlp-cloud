@@ -1,0 +1,8 @@
+name = "yt-cloud-dl-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+GH_REPO = "YOUR_NAME/yt-cloud-dl"
+ALLOWED_ORIGIN = "https://YOUR_NAME.github.io"
+# Secret (do not commit): npx wrangler secret put GH_TOKEN

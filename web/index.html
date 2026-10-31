@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>雲端影片下載器</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📼</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>貼上連結，<br>雲端幫你下載好。</h1>
+  <p class="lead">影片、整份播放清單、純音樂都行。檔案在 GitHub 的雲端主機上轉檔，完成後直接給你下載連結。</p>
+
+  <form id="form" class="slab" autocomplete="off">
+    <label class="field">
+      <span>YouTube 連結</span>
+      <input id="url" type="url" required placeholder="https://www.youtube.com/watch?v=…">
+    </label>
+
+    <div class="tabs" role="radiogroup" aria-label="類型">
+      <label><input type="radio" name="mode" value="video" checked><b>影片</b></label>
+      <label><input type="radio" name="mode" value="audio"><b>只要音訊</b></label>
+    </div>
+
+    <div class="row">
+      <label class="field"><span>格式</span><select id="format"></select></label>
+      <label class="field" id="qwrap"><span>最高畫質</span>
+        <select id="quality">
+          <option value="best">最高</option><option value="2160">4K</option><option value="1440">1440p</option>
+          <option value="1080" selected>1080p</option><option value="720">720p</option>
+          <option value="480">480p</option><option value="360">360p</option>
+        </select>
+      </label>
+    </div>
+
+    <label class="check"><input type="checkbox" id="playlist"><span>這是播放清單，下載全部影片（會打包成 ZIP）</span></label>
+
+    <button id="go" type="submit">開始下載</button>
+    <p id="err" class="err" role="alert" hidden></p>
+  </form>
+
+  <section id="job" class="job" hidden aria-live="polite">
+    <ol id="stages">
+      <li>準備工具<small>yt-dlp、ffmpeg、ffprobe</small></li>
+      <li>下載與轉檔</li>
+      <li>打包上傳</li>
+      <li>可以下載了</li>
+    </ol>
+    <div id="result"></div>
+  </section>
+
+  <footer>開源專案，只用於下載你有權下載的內容。檔案會在數小時後自動刪除。</footer>
+</main>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

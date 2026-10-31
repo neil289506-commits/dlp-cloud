@@ -1,0 +1,17 @@
+name: cleanup
+on:
+  schedule: [{ cron: '17 * * * *' }]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+    steps:
+      - shell: pwsh
+        run: |
+          $cut = (Get-Date).ToUniversalTime().AddHours(-6)
+          gh release list --limit 200 --json tagName,createdAt | ConvertFrom-Json |
+            Where-Object { $_.tagName -like 'job-*' -and ([datetime]$_.createdAt).ToUniversalTime() -lt $cut } |
+            ForEach-Object { gh release delete $_.tagName --cleanup-tag --yes }
