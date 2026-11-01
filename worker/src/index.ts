@@ -1,5 +1,15 @@
 /// <reference types="@cloudflare/workers-types" />
-interface Env { GH_TOKEN: string; GH_REPO: string; ALLOWED_ORIGIN: string }
+interface Env { GH_TOKEN: string; GH_REPO: string; ALLOWED_ORIGIN: string; TURNSTILE_SECRET: string }
+
+async function verifyTurnstile(token: string, secret: string, ip: string | null): Promise<boolean> {
+  if (!token) return false;
+  const body = new FormData();
+  body.append('secret', secret);
+  body.append('response', token);
+  if (ip) body.append('remoteip', ip);
+  const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body });
+  return ((await r.json()) as { success?: boolean }).success === true;
+}
 
 const YT = /^https:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\/[\w\-./?=&%#@+]+$/i;
 const FORMATS = { video: ['mp4', 'mkv', 'webm'], audio: ['mp3', 'm4a', 'opus', 'flac', 'wav'] } as const;
@@ -33,6 +43,8 @@ export default {
 
       if (req.method === 'POST' && pathname === '/api/jobs') {
         const b = (await req.json()) as Record<string, string | boolean>;
+        const human = await verifyTurnstile(String(b.cf_token ?? ''), env.TURNSTILE_SECRET, req.headers.get('CF-Connecting-IP'));
+        if (!human) return json({ error: 'captcha' }, 403);
         const mode = b.mode === 'audio' ? 'audio' : 'video';
         const url = String(b.url ?? '').trim();
         const format = String(b.format ?? '');

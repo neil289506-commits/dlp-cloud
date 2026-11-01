@@ -3,6 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
 [vars]
-GH_REPO = "YOUR_NAME/yt-cloud-dl"
-ALLOWED_ORIGIN = "https://YOUR_NAME.github.io"
-# Secret (do not commit): npx wrangler secret put GH_TOKEN
+GH_REPO = "neil289506-commits/dlp-cloud"
+ALLOWED_ORIGIN = "https://neil289506-commits.github.io"
+# Secrets (never commit them):
+#   npx wrangler secret put GH_TOKEN          # GitHub PAT: Actions read/write, Contents read
+#   npx wrangler secret put TURNSTILE_SECRET  # Cloudflare Turnstile secret key

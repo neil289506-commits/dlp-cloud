@@ -23,8 +23,13 @@ jobs:
       IN_QUALITY: ${{ inputs.quality }}
       IN_PLAYLIST: ${{ inputs.playlist }}
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       YT_COOKIES: ${{ secrets.YT_COOKIES }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Fetch tools
         shell: pwsh
         run: |
@@ -35,7 +40,36 @@ jobs:
           Expand-Archive "$d\ff.zip" "$d\ff"
           Copy-Item "$d\ff\*\bin\ffmpeg.exe", "$d\ff\*\bin\ffprobe.exe" $d
           $d | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-          & "$d\yt-dlp.exe" --version; & "$d\ffmpeg.exe" -version | Select-Object -First 1
+          & "$d\yt-dlp.exe" --version
+          & "$d\ffmpeg.exe" -version | Select-Object -First 1
+          node --version
+
+      - name: Start PO token provider
+        continue-on-error: true   # optional: if this fails, the download still runs without a PO token
+        shell: pwsh
+        run: |
+          $repo = 'Brainicism/bgutil-ytdlp-pot-provider'
+          $tag = gh api "repos/$repo/releases/latest" --jq .tag_name
+          if (-not $tag) { throw 'Could not resolve the provider version' }
+          Write-Host "bgutil provider $tag"
+          # 1) yt-dlp plugin (zip dropped into the yt-dlp plugin folder)
+          $plug = Join-Path $env:APPDATA 'yt-dlp\plugins'
+          New-Item -ItemType Directory $plug -Force | Out-Null
+          Invoke-WebRequest "https://github.com/$repo/releases/download/$tag/bgutil-ytdlp-pot-provider.zip" -OutFile "$plug\bgutil-ytdlp-pot-provider.zip"
+          # 2) token server (same version as the plugin), listens on 127.0.0.1:4416
+          git clone --depth 1 --single-branch --branch $tag "https://github.com/$repo.git" "$env:RUNNER_TEMP\bgutil"
+          Push-Location "$env:RUNNER_TEMP\bgutil\server"
+          npm ci
+          npx tsc
+          Start-Process node -ArgumentList 'build/main.js' -WindowStyle Hidden
+          Pop-Location
+          $ok = $false
+          foreach ($i in 1..30) {
+            try { $c = [Net.Sockets.TcpClient]::new('127.0.0.1', 4416); $c.Close(); $ok = $true; break }
+            catch { Start-Sleep -Seconds 1 }
+          }
+          if (-not $ok) { throw 'PO token server did not start' }
+          Write-Host 'PO token server is up on 127.0.0.1:4416'
 
       - name: Download
         shell: pwsh
@@ -45,9 +79,13 @@ jobs:
           if ($env:IN_FORMAT -notmatch '^(mp4|mkv|webm|mp3|m4a|opus|flac|wav)$') { throw 'Invalid format' }
           if ($env:IN_QUALITY -notmatch '^(best|\d{3,4})$') { throw 'Invalid quality' }
           New-Item -ItemType Directory out | Out-Null
+
           $a = @('--no-warnings', '--newline', '--embed-metadata', '--restrict-filenames',
-                 '-o', 'out/%(title).100B [%(id)s].%(ext)s')
+                 '--js-runtimes', 'node',
+                 '--remote-components', 'ejs:github',
+                 '-o', 'out/%(title).100B-%(id)s.%(ext)s')
           $a += $(if ($env:IN_PLAYLIST -eq 'true') { '--yes-playlist' } else { '--no-playlist' })
+
           if ($env:IN_MODE -eq 'audio') {
             $a += @('-x', '--audio-format', $env:IN_FORMAT, '--audio-quality', '0')
           } else {
@@ -55,24 +93,37 @@ jobs:
             $f = $(if ($h -eq 'best') { 'bv*+ba/b' } else { "bv*[height<=$h]+ba/b[height<=$h]" })
             $a += @('-f', $f, '--merge-output-format', $env:IN_FORMAT)
           }
+
           if ($env:YT_COOKIES) {
             [IO.File]::WriteAllText("$PWD\cookies.txt", $env:YT_COOKIES)
             $a += @('--cookies', 'cookies.txt')
           }
+
           yt-dlp @a $env:IN_URL
-          if ($LASTEXITCODE -ne 0) { throw "yt-dlp exit $LASTEXITCODE" }
+          $code = $LASTEXITCODE
           Remove-Item cookies.txt -ErrorAction SilentlyContinue
+          if ($code -ne 0) {
+            Write-Host '--- available formats (for debugging) ---'
+            yt-dlp --js-runtimes node --remote-components ejs:github -F --no-playlist $env:IN_URL
+            throw "yt-dlp exit $code"
+          }
 
       - name: Package and publish
         shell: pwsh
         run: |
           $files = @(Get-ChildItem out -File -Recurse | Where-Object { $_.Extension -notin '.part', '.ytdl' })
           if ($files.Count -eq 0) { throw 'No output files' }
+          # [ ] are glob characters for gh, so make sure no file name contains them
+          $files = @($files | ForEach-Object {
+            if ($_.Name -match '[\[\]]') {
+              Rename-Item -LiteralPath $_.FullName -NewName ($_.Name -replace '[\[\]]', '') -PassThru
+            } else { $_ }
+          })
           if ($files.Count -eq 1) {
             $asset = $files[0].FullName
           } else {
             $asset = Join-Path $PWD "playlist-$env:JOB_ID.zip"
-            Compress-Archive -Path ($files.FullName) -DestinationPath $asset -CompressionLevel NoCompression
+            Compress-Archive -LiteralPath ($files.FullName) -DestinationPath $asset -CompressionLevel NoCompression
           }
           if ((Get-Item $asset).Length -gt 1.9GB) { throw 'File exceeds the 2 GB release asset limit' }
-          gh release create "job-$env:JOB_ID" $asset --title "job-$env:JOB_ID" --notes "Temporary. Auto-deleted after a few hours."
+          gh release create "job-$env:JOB_ID" $asset --repo $env:GH_REPO --target $env:GITHUB_SHA --title "job-$env:JOB_ID" --notes "Temporary. Auto-deleted after a few hours."
