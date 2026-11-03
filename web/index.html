@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>dlp-cloud</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📼</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <strong>dlp-cloud</strong>
+    <button id="lang" type="button" class="link" aria-label="Language"></button>
+  </header>
+
+  <h1 data-i18n="title"></h1>
+  <p class="lead" data-i18n="lead"></p>
+
+  <form id="form" autocomplete="off">
+    <label class="field">
+      <span data-i18n="url"></span>
+      <input id="url" type="url" required placeholder="https://">
+      <small class="hint" data-i18n="hint"></small>
+    </label>
+
+    <fieldset>
+      <legend data-i18n="type"></legend>
+      <label><input type="radio" name="mode" value="video" checked> <span data-i18n="video"></span></label>
+      <label><input type="radio" name="mode" value="audio"> <span data-i18n="audio"></span></label>
+    </fieldset>
+
+    <div class="row">
+      <label class="field"><span data-i18n="format"></span><select id="format"></select></label>
+      <label class="field" id="qwrap"><span data-i18n="quality"></span>
+        <select id="quality">
+          <option value="best" data-i18n="best"></option><option value="2160">4K</option><option value="1440">1440p</option>
+          <option value="1080" selected>1080p</option><option value="720">720p</option>
+          <option value="480">480p</option><option value="360">360p</option>
+        </select>
+      </label>
+    </div>
+
+    <label class="check"><input type="checkbox" id="playlist"> <span data-i18n="playlist"></span></label>
+
+    <div id="rc2" hidden></div>
+
+    <button id="go" type="submit" data-i18n="go"></button>
+    <p id="err" class="err" role="alert" hidden></p>
+  </form>
+
+  <section id="job" hidden aria-live="polite">
+    <ol id="stages"><li data-i18n="s1"></li><li data-i18n="s2"></li><li data-i18n="s3"></li><li data-i18n="s4"></li></ol>
+    <div id="result"></div>
+  </section>
+
+  <footer>
+    <p data-i18n="note"></p>
+    <p><a href="https://github.com/neil289506-commits/dlp-cloud" target="_blank" rel="noopener">neil289506-commits/dlp-cloud</a></p>
+    <p>Copyleft by MIT License｜以 MIT 授權條款釋出</p>
+  </footer>
+</main>
+<script src="config.js?v=7"></script>
+<script src="app.js?v=7"></script>
+</body>
+</html>

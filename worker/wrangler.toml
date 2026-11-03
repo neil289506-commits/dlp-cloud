@@ -1,0 +1,12 @@
+name = "yt-cloud-dl-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+GH_REPO = "neil289506-commits/dlp-cloud"
+ALLOWED_ORIGIN = "https://dlp.shtrl.me"
+# Secrets (never commit them):
+#   GH_TOKEN_1 ... GH_TOKEN_5 (or just GH_TOKEN)  # GitHub PATs: Actions read/write, Contents read.
+#                                                  # The Worker picks one at random and fails over to the next.
+#   npx wrangler secret put RECAPTCHA_V3_SECRET  # reCAPTCHA v3 secret key (score check)
+#   npx wrangler secret put RECAPTCHA_V2_SECRET  # reCAPTCHA v2 ("I'm not a robot") secret key

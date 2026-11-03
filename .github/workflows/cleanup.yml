@@ -1,0 +1,22 @@
+name: cleanup
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours (UTC)
+  workflow_dispatch:         # manual run
+permissions:
+  contents: write
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete all job releases
+        shell: pwsh
+        run: |
+          $tags = @(gh release list --limit 1000 --json tagName | ConvertFrom-Json |
+                    Where-Object { $_.tagName -like 'job-*' } |
+                    ForEach-Object { $_.tagName })
+          Write-Host "Deleting $($tags.Count) release(s)"
+          foreach ($t in $tags) { gh release delete $t --cleanup-tag --yes }
