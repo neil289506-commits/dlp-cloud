@@ -10,3 +10,7 @@ ALLOWED_ORIGIN = "https://dlp.shtrl.me"
 #                                                  # The Worker picks one at random and fails over to the next.
 #   npx wrangler secret put RECAPTCHA_V3_SECRET  # reCAPTCHA v3 secret key (score check)
 #   npx wrangler secret put RECAPTCHA_V2_SECRET  # reCAPTCHA v2 ("I'm not a robot") secret key
+ALLOWED_ORIGIN = "https://neil289506-commits.github.io"
+# Secrets (never commit them):
+#   npx wrangler secret put GH_TOKEN          # GitHub PAT: Actions read/write, Contents read
+#   npx wrangler secret put TURNSTILE_SECRET  # Cloudflare Turnstile secret key

@@ -53,6 +53,9 @@ jobs:
         shell: pwsh
         run: |
           $ProgressPreference = 'SilentlyContinue'
+        continue-on-error: true   # optional: if this fails, the download still runs without a PO token
+        shell: pwsh
+        run: |
           $repo = 'Brainicism/bgutil-ytdlp-pot-provider'
           $tag = gh api "repos/$repo/releases/latest" --jq .tag_name
           if (-not $tag) { throw 'Could not resolve the provider version' }
@@ -73,6 +76,11 @@ jobs:
           Pop-Location
           $out = "$env:RUNNER_TEMP\pot.out.log"; $errlog = "$env:RUNNER_TEMP\pot.err.log"
           Start-Process node -ArgumentList 'build/main.js' -WorkingDirectory $srv -RedirectStandardOutput $out -RedirectStandardError $errlog
+          Push-Location "$env:RUNNER_TEMP\bgutil\server"
+          npm ci
+          npx tsc
+          Start-Process node -ArgumentList 'build/main.js' -WindowStyle Hidden
+          Pop-Location
           $ok = $false
           foreach ($i in 1..30) {
             try { $c = [Net.Sockets.TcpClient]::new('127.0.0.1', 4416); $c.Close(); $ok = $true; break }
@@ -82,6 +90,7 @@ jobs:
             Get-Content $out, $errlog -ErrorAction SilentlyContinue
             throw 'PO token server did not start'
           }
+          if (-not $ok) { throw 'PO token server did not start' }
           Write-Host 'PO token server is up on 127.0.0.1:4416'
 
       - name: Download
@@ -89,6 +98,7 @@ jobs:
         run: |
           # Inputs arrive only through env vars and are validated here, never pasted into code.
           if ($env:IN_URL -notmatch '^https://(www\.|m\.|music\.)?(youtube\.com|youtu\.be|bilibili\.com|instagram\.com)/\S+$') { throw 'Invalid URL' }
+          if ($env:IN_URL -notmatch '^https://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/\S+$') { throw 'Invalid URL' }
           if ($env:IN_FORMAT -notmatch '^(mp4|mkv|webm|mp3|m4a|opus|flac|wav)$') { throw 'Invalid format' }
           if ($env:IN_QUALITY -notmatch '^(best|\d{3,4})$') { throw 'Invalid quality' }
           New-Item -ItemType Directory out | Out-Null
@@ -98,6 +108,7 @@ jobs:
                  '--remote-components', 'ejs:github',
                  '-o', 'out/%(title).100B-%(id)s.%(ext)s')
           if ($env:IN_PLAYLIST -eq 'true') { $a += @('--yes-playlist', '--playlist-end', '100') } else { $a += '--no-playlist' }
+          $a += $(if ($env:IN_PLAYLIST -eq 'true') { '--yes-playlist' } else { '--no-playlist' })
 
           if ($env:IN_MODE -eq 'audio') {
             $a += @('-x', '--audio-format', $env:IN_FORMAT, '--audio-quality', '0')
@@ -111,6 +122,8 @@ jobs:
           $ck = @($env:YT_COOKIES, $env:IG_COOKIES, $env:BILI_COOKIES) | Where-Object { $_ }
           if ($ck.Count -gt 0) {
             [IO.File]::WriteAllText("$PWD\cookies.txt", ($ck -join "`n"))
+          if ($env:YT_COOKIES) {
+            [IO.File]::WriteAllText("$PWD\cookies.txt", $env:YT_COOKIES)
             $a += @('--cookies', 'cookies.txt')
           }
 
