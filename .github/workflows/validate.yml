@@ -1,0 +1,41 @@
+name: validate
+
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'worker/**'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'worker/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate frontend syntax
+        run: node --check web/app.js
+
+      - name: Install Worker dependencies
+        run: npm ci
+        working-directory: worker
+
+      - name: Bundle Worker
+        run: npx wrangler deploy --dry-run
+        working-directory: worker
