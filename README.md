@@ -1,112 +1,35 @@
 # dlp-cloud
 
-中文在前，English below.
-
-## 中文
-純前端網頁 + Cloudflare Worker + GitHub Actions Windows Runner。
+純前端網頁 + Cloudflare Worker + GitHub Actions Windows Runner，支援 YouTube、bilibili 與 Instagram 的影片、播放清單及純音訊下載。
 
 ```
-瀏覽器 (GitHub Pages) → Cloudflare 安全驗證（進站）→ reCAPTCHA v3（下載；分數低於 0.7 改用 v2）→ Worker (藏 token、驗證輸入) → workflow_dispatch
-瀏覽器 (GitHub Pages) → Turnstile 人機驗證 → Worker (藏 token、驗證輸入) → workflow_dispatch
->>>>>>>-main
-ml 每 6 小時（或手動）刪除全部臨時檔案
+瀏覽器（GitHub Pages）→ Cloudflare Turnstile → Worker → GitHub Actions workflow_dispatch
+                                      → Windows runner：yt-dlp、ffmpeg → GitHub Release 暫存檔
 ```
 
-### 部署
-1. 建立 **公開** repo `neil289506-commits/dlp-cloud`，推上全部檔案，預設分支 `main`。Settings → Pages → Source 選 **GitHub Actions**。
-2. 建 fine-grained PAT，只授權此 repo：**Actions: Read and write**、**Contents: Read**。
-3. 到 Google reCAPTCHA 後台建立兩把金鑰（網域填 `neil289506-commits.github.io`）：一把 **v3**、一把 **v2「我不是機器人」核取方塊**，各有 Site key 與 Secret key。
-4. `cd worker && npm i`，然後：
-   ```
-   npx wrangler secret put GH_TOKEN
-   npx wrangler secret put RECAPTCHA_V3_SECRET
-   npx wrangler secret put RECAPTCHA_V2_SECRET
-   npx wrangler deploy
-   ```
-5. 編輯 `web/config.js`：`API_BASE` 填 Worker 網址（結尾不要斜線），`RECAPTCHA_V3_SITE_KEY`、`RECAPTCHA_V2_SITE_KEY` 填兩把 Site key。Push 後網站上線。
-6. 建議在 Cloudflare 對 Worker 加 Rate Limiting。
+## 部署
 
-### 進站的 Cloudflare 安全驗證（需要自己的網域）
-1. 網域加入 Cloudflare（免費方案即可），DNS 新增 `CNAME dl → neil289506-commits.github.io`；repo Settings → Pages → Custom domain 填 `dl.你的網域`。建議先用「僅 DNS」讓 GitHub 發好 HTTPS 憑證，再切成 Proxied（橘雲），SSL/TLS 模式選 Full。
-2. Security → WAF → Custom rules：Hostname 等於 `dl.你的網域` → 動作選 **Managed Challenge**。
-3. 把 `wrangler.toml` 的 `ALLOWED_ORIGIN` 改成 `https://dl.你的網域`，重新部署 Worker；reCAPTCHA 兩把金鑰的網域清單也加入這個網域。
-4. Worker 維持 `workers.dev` 網址，不要被這條規則挑戰，否則網頁的 API 請求會失敗。
+1. 將 repo 設定為 GitHub Pages，Source 選 **GitHub Actions**。
+2. 在 Cloudflare 建立 Turnstile widget，Hostname 填 GitHub Pages 網域，將 Site key 填入 `web/config.js`。
+3. 在 Worker 設定 secrets：
 
-### 用 GitHub Actions 自動部署 Worker
-repo secrets 新增 `CLOUDFLARE_API_TOKEN`（Cloudflare → My Profile → API Tokens → 範本 "Edit Cloudflare Workers"）與 `CLOUDFLARE_ACCOUNT_ID`。之後 `worker/` 有變動並 push 到 `main` 就會自動部署（`deploy-worker.yml`）。Worker 的 `GH_TOKEN_1`…`GH_TOKEN_5`（或單一 `GH_TOKEN`）、`RECAPTCHA_V3_SECRET`、`RECAPTCHA_V2_SECRET` 仍在 Cloudflare 後台設定一次即可，部署不會清掉它們。若同時連動了 Workers Builds，請先中斷，避免重複部署。
-
-### 常見問題
-- **YouTube 要求登入／判定機器人**：workflow 已自動啟動 PO token 服務（bgutil-ytdlp-pot-provider），不保證永遠有效。仍被擋時，把瀏覽器匯出的 `cookies.txt` 存成 repo secret `YT_COOKIES`（建議用專用帳號）。
-- PO token 步驟失敗不會中斷下載，只是少了這層保護。
-- 支援 YouTube、bilibili（`bilibili.com/video/BV…`）、Instagram（`/p/`、`/reel/`、`/tv/`）。bilibili 有地區限制的影片、Instagram 多數貼文，在 GitHub 的美國機房通常需要登入 cookies：分別存成 repo secret `BILI_COOKIES`、`IG_COOKIES`（Netscape 格式，建議專用帳號）。
-3. 到 Cloudflare 建 Turnstile 小工具（Hostname 填 `neil289506-commits.github.io`），取得 Site key 與 Secret key。
-4. `cd worker && npm i`，然後：
    ```
    npx wrangler secret put GH_TOKEN
    npx wrangler secret put TURNSTILE_SECRET
+   ```
+
+4. 將 `worker/wrangler.toml` 的 `ALLOWED_ORIGIN` 改為實際網站網址，然後部署：
+
+   ```
+   cd worker
+   npm install
    npx wrangler deploy
    ```
-5. 編輯 `web/config.js`：`API_BASE` 填 Worker 網址（結尾不要斜線），`TURNSTILE_SITE_KEY` 填 Site key。Push 後網站上線。
-6. 建議在 Cloudflare 對 Worker 加 Rate Limiting。
 
-### 常見問題
-- **YouTube 要求登入／判定機器人**：workflow 已自動啟動 PO token 服務（bgutil-ytdlp-pot-provider），不保證永遠有效。仍被擋時，把瀏覽器匯出的 `cookies.txt` 存成 repo secret `YT_COOKIES`（建議用專用帳號）。
-- PO token 步驟失敗不會中斷下載，只是少了這層保護。
-- 連結要用 `youtu.be/ID` 或 `youtube.com/watch?v=ID` 格式。
-- 單檔上限 2 GB（Release 限制）；播放清單會打包成 ZIP。
-- 請只下載你有權下載的內容，並遵守 YouTube 服務條款與當地法律。
+GitHub Actions 自動部署 Worker 需要 repository secrets `CLOUDFLARE_API_TOKEN` 與 `CLOUDFLARE_ACCOUNT_ID`。若來源網站需要登入，可分別設定 `YT_COOKIES`、`BILI_COOKIES`、`IG_COOKIES`（Netscape 格式）供 workflow 使用。
 
-## English
-Static web page + Cloudflare Worker + GitHub Actions Windows runner.
-
-```
-Browser (GitHub Pages) → Cloudflare security challenge (entry) → reCAPTCHA v3 (download; v2 if score < 0.7) → Worker (hides the token, validates input) → workflow_dispatch
-Browser (GitHub Pages) → Turnstile check → Worker (hides the token, validates input) → workflow_dispatch
-  → windows-latest: fetch3. 到 Cloudflare 建 Turnstile 小工具（Hostname 填 `neil289506-commits.github.io`），取得 Site key 與 Secret key。
-4. `cd worker && npm i`，然後：
-   ```
-   npx wrangler secret put GH_TOKEN
-   npx wrangler secret put TURNSTILE_SECRET
-   npx wrangler deploy
-   ```
-5. 編輯 `web/config.js`：`API_BASE` 填 Worker 網址（結尾不要斜線），`TURNSTILE_SITE_KEY` 填 Site key。Push 後網站上線。
-6. 建議在 Cloudflare 對 Worker 加 Rate Limiting。
-
-### 常見問題
-- **YouTube 要求登入／判定機器人**：workflow 已自動啟動 PO token 服務（bgutil-ytdlp-pot-provider），不保證永遠有效。仍被擋時，把瀏覽器匯出的 `cookies.txt` 存成 repo secret `YT_COOKIES`（建議用專用帳號）。
-- PO token 步驟失敗不會中斷下載，只是少了這層保護。
-- 連結要用 `youtu.be/ID` 或 `youtube.com/watch?v=ID` 格式。
->>>>>>>-main
-` to the Worker URL (no trailing slash) and `RECAPTCHA_V3_SITE_KEY` and `RECAPTCHA_V2_SITE_KEY` to the two Site keys. Push to publish.
-6. Add Cloudflare Rate Limiting for the Worker.
-
-### Cloudflare challenge on entry (needs your own domain)
-1. Add your domain to Cloudflare (free plan is fine) and create `CNAME dl → neil289506-commits.github.io`; set Pages → Custom domain to `dl.your-domain`. Use DNS-only first so GitHub can issue the HTTPS certifBrowser (GitHub Pages) → Turnstile check → Worker (hides the token, validates input) → workflow_dispatch
->>>>>>>-main
-ion **Managed Challenge**.
-3. Change `ALLOWED_ORIGIN` in `wrangler.toml` to `https://dl.your-domain`, redeploy the Worker, and add the domain to both reCAPTCHA keys.
-4. Keep the Worker on its `workers.dev` URL so the rule does not challenge the page's API calls.
-
-### Auto-deploy the Worker with GitHub Actions
-Add repo secrets `CLOUDFLARE_API_TOKEN` (Cloudflare → My Profile → API Tokens → "Edit Cloudflare Workers" template) and `CLOUDFLARE_ACCOUNT_ID`. Pushes to `main` that touch `worker/` then deploy automatically (`deploy-worker.yml`). The Worker secrets (`GH_TOKEN`, `RECAPTCHA_V3_SECRET`, `RECAPTCHA_V2_SECRET`) are set once in the Cloudflare dashboard and survive deployments. Disconnect Workers Builds if it is also enabled, to avoid double deploys.
-
-### FAQ
-- **YouTube asks to sign in / flags a bot**: the workflow starts a PO token server (bgutil-ytdlp-pot-provider); it is not guaranteed to keep working. If still blocked, save an exported `cookies.txt` as the repo secret `YT_COOKIES` (use a dedicated account).
-- A failing PO token step does not stop the download; you just lose that extra protection.
-- Supported: YouTube, bilibili (`bilibili.com/video/BV…`), Instagram (`/p/`, `/reel/`, `/tv/`). Region-locked bilibili videos and most Instagram posts usually need login cookies from the US runner: save them as the repo secrets `BILI_COOKIES` and `IG_COOKIES` (Netscape format, dedicated accounts recommended).
-=======
-3. Create a Cloudflare Turnstile widget (hostname `neil289506-commits.github.io`) to get a Site key and a Secret key.
-4. `cd worker && npm i`, then run `npx wrangler secret put GH_TOKEN`, `npx wrangler secret put TURNSTILE_SECRET`, `npx wrangler deploy`.
-5. Edit `web/config.js`: set `API_BASE` to the Worker URL (no trailing slash) and `TURNSTILE_SITE_KEY` to the Site key. Push to publish.
-6. Add Cloudflare Rate Limiting for the Worker.
-
-### FAQ
-- **YouTube asks to sign in / flags a bot**: the workflow starts a PO token server (bgutil-ytdlp-pot-provider); it is not guaranteed to keep working. If still blocked, save an exported `cookies.txt` as the repo secret `YT_COOKIES` (use a dedicated account).
-- A failing PO token step does not stop the download; you just lose that extra protection.
-- Use `youtu.be/ID` or `youtube.com/watch?v=ID` links.
->>>>>>> main
-- 2 GB per file (Release limit); playlists are zipped.
-- Only download content you have the right to, and follow YouTube's terms and local law.
+下載檔案會發佈為暫存 GitHub Release，清理 workflow 每 6 小時刪除 `job-*` releases。單檔上限為 2 GB；請只下載你有權下載的內容。
 
 ## License
-Copyleft by MIT License｜以 MIT 授權條款釋出。 See `LICENSE`.
+
+Copyleft by MIT License｜以 MIT 授權條款釋出。
