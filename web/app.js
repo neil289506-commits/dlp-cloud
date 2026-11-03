@@ -36,29 +36,50 @@ const FORMATS = { video: ['mp4', 'mkv', 'webm'], audio: ['mp3', 'm4a', 'opus', '
 const $ = (id) => document.getElementById(id);
 const form = $('form'), source = $('source'), fmt = $('format'), go = $('go'), err = $('err');
 let timer = null, lang = 'zh', failedState = null, v3Token = '', v2Token = '', v2Id = null, v2Needed = false;
+let recaptchaLoaded = false, v2RenderPromise = null;
 
 try { lang = localStorage.getItem('lang') || ((navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en'); } catch {}
 const t = (key) => I18N[lang][key];
 
 function recaptchaReady() {
-  return typeof grecaptcha !== 'undefined' && typeof grecaptcha.ready === 'function';
+  return recaptchaLoaded && typeof grecaptcha !== 'undefined' && typeof grecaptcha.ready === 'function';
+}
+window.onRecaptchaLoad = () => {
+  recaptchaLoaded = true;
+  if (v2Needed) renderV2();
+};
+function renderV2() {
+  if (v2Id !== null) return Promise.resolve();
+  if (v2RenderPromise) return v2RenderPromise;
+  v2RenderPromise = new Promise((resolve, reject) => {
+    grecaptcha.ready(() => {
+      try {
+        v2Id = grecaptcha.render('rc2', {
+          sitekey: window.RECAPTCHA_V2_SITE_KEY,
+          theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+          callback: (token) => { v2Token = token; },
+          'expired-callback': () => { v2Token = ''; },
+          'error-callback': () => { v2Token = ''; },
+        });
+        resolve();
+      } catch (error) {
+        v2RenderPromise = null;
+        reject(error);
+      }
+    });
+  });
 }
 function showV2() {
   v2Needed = true;
   $('rc2').hidden = false;
-  if (v2Id !== null) return;
-  if (!recaptchaReady()) return;
-  v2Id = grecaptcha.render('rc2', {
-    sitekey: window.RECAPTCHA_V2_SITE_KEY,
-    theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
-    callback: (token) => { v2Token = token; },
-    'expired-callback': () => { v2Token = ''; },
-    'error-callback': () => { v2Token = ''; },
-  });
+  if (recaptchaReady()) renderV2().catch(() => fail('errCaptchaLoad'));
 }
 function resetCaptcha() {
-  v3Token = ''; v2Token = '';
-  if (v2Id !== null && recaptchaReady()) grecaptcha.reset(v2Id);
+  v3Token = '';
+  if (v2Token && v2Id !== null && recaptchaReady()) {
+    v2Token = '';
+    grecaptcha.reset(v2Id);
+  }
 }
 function applyLang() {
   document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';
