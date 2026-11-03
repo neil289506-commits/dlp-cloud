@@ -42,7 +42,8 @@ try { lang = localStorage.getItem('lang') || ((navigator.language || '').toLower
 const t = (key) => I18N[lang][key];
 
 function recaptchaReady() {
-  return recaptchaLoaded && typeof grecaptcha !== 'undefined' && typeof grecaptcha.ready === 'function';
+  if (typeof grecaptcha !== 'undefined' && typeof grecaptcha.ready === 'function') recaptchaLoaded = true;
+  return recaptchaLoaded;
 }
 window.onRecaptchaLoad = () => {
   recaptchaLoaded = true;
@@ -73,6 +74,13 @@ function showV2() {
   v2Needed = true;
   $('rc2').hidden = false;
   if (recaptchaReady()) renderV2().catch(() => fail('errCaptchaLoad'));
+}
+function executeV3() {
+  return new Promise((resolve, reject) => {
+    grecaptcha.ready(() => {
+      grecaptcha.execute(window.RECAPTCHA_V3_SITE_KEY, { action: 'download' }).then(resolve, reject);
+    });
+  });
 }
 function resetCaptcha() {
   v3Token = '';
@@ -146,14 +154,12 @@ function poll(jobId, started) {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   err.hidden = true; err.dataset.key = ''; failedState = null; $('result').innerHTML = '';
-  if (!recaptchaReady()) { fail('errCaptchaLoad'); return; }
+  if (!recaptchaReady()) { showV2(); fail('errCaptchaLoad'); return; }
   if (v2Needed && !v2Token) { fail('errCaptcha'); return; }
   go.disabled = true;
   try {
     if (!v2Needed) {
-      v3Token = await new Promise((resolve, reject) => {
-        grecaptcha.ready(() => grecaptcha.execute(window.RECAPTCHA_V3_SITE_KEY, { action: 'download' }).then(resolve, reject));
-      });
+      v3Token = await executeV3();
     }
     const { jobId } = await api('/api/jobs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -168,6 +174,7 @@ form.addEventListener('submit', async (e) => {
     poll(jobId, Date.now());
   } catch (x) {
     if (x.code === 'need_v2') { showV2(); fail('errNeedV2'); }
+    else if (!v2Needed) { showV2(); fail('errNeedV2'); }
     else fail(x.status === 400 ? 'errInvalid' : x.status === 403 ? 'errCaptcha' : 'errServer');
   } finally {
     resetCaptcha();
