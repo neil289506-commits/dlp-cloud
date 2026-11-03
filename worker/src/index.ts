@@ -3,7 +3,8 @@ interface Env {
   GH_REPO: string;
   ALLOWED_ORIGIN: string;
   GH_TOKEN?: string;
-  TURNSTILE_SECRET: string;
+  RECAPTCHA_V3_SECRET: string;
+  RECAPTCHA_V2_SECRET: string;
 }
 
 const FORMATS = { video: ['mp4', 'mkv', 'webm'], audio: ['mp3', 'm4a', 'opus', 'flac', 'wav'] } as const;
@@ -18,10 +19,7 @@ function normalizeUrl(input: string): string | null {
   if (url.protocol !== 'https:') return null;
   const host = url.hostname.toLowerCase().replace(/^(www\.|m\.|music\.)/, '');
   const parts = url.pathname.split('/').filter(Boolean);
-  if (host === 'youtu.be') {
-    const id = parts[0] ?? '';
-    return /^[\w-]{11}$/.test(id) ? `https://youtu.be/${id}` : null;
-  }
+  if (host === 'youtu.be') return /^[\w-]{11}$/.test(parts[0] ?? '') ? `https://youtu.be/${parts[0]}` : null;
   if (host === 'youtube.com') {
     const path = parts[0] ?? '';
     const id = path === 'watch' ? url.searchParams.get('v') ?? '' : ['shorts', 'live', 'embed'].includes(path) ? parts[1] ?? '' : '';
@@ -58,8 +56,7 @@ function tokenList(env: Env): string[] {
   const values = Object.entries(env as unknown as Record<string, unknown>)
     .filter(([key, value]) => /^GH_TOKEN(_\d+)?$/.test(key) && typeof value === 'string' && value)
     .map(([, value]) => value as string);
-  const list = [...new Set(values)];
-  return list.sort(() => Math.random() - 0.5).sort((token) => (cooldown.get(token) ?? 0) > Date.now() ? 1 : -1);
+  return [...new Set(values)].sort((a, b) => Number((cooldown.get(a) ?? 0) > Date.now()) - Number((cooldown.get(b) ?? 0) > Date.now()));
 }
 async function cached<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
   const hit = memo.get(key);
@@ -68,19 +65,20 @@ async function cached<T>(key: string, ttl: number, fn: () => Promise<T>): Promis
   memo.set(key, { t: Date.now(), v: value });
   return value;
 }
-async function verifyTurnstile(secret: string, token: string, ip: string, hostname: string): Promise<boolean> {
-  if (!token) return false;
+type RecaptchaVerdict = { success?: boolean; score?: number; action?: string; hostname?: string };
+async function verifyRecaptcha(secret: string, token: string, ip: string): Promise<RecaptchaVerdict | null> {
+  if (!token) return null;
   const body = new URLSearchParams({ secret, response: token });
   if (ip) body.set('remoteip', ip);
-  const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body });
-  if (!response.ok) return false;
-  const result = await response.json() as { success?: boolean; hostname?: string };
-  return result.success === true && (!result.hostname || result.hostname === hostname);
+  const response = await fetch('https://www.google.com/recaptcha/api/siteverify', { method: 'POST', body });
+  if (!response.ok) return null;
+  return await response.json() as RecaptchaVerdict;
 }
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const origin = new URL(env.ALLOWED_ORIGIN).origin;
+    const hostname = new URL(origin).hostname;
     const cors = { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin' };
     const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
@@ -88,7 +86,13 @@ export default {
       let last: Response | null = null;
       for (const token of tokenList(env)) {
         const response = await fetch(`https://api.github.com/repos/${env.GH_REPO}${path}`, {
-          ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'dlp-cloud', 'X-GitHub-Api-Version': '2022-11-28' },
+          ...init,
+          headers: {
+            ['Authorization']: 'Bearer ' + token,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'dlp-cloud',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
         });
         if (![401, 403, 429].includes(response.status)) return response;
         const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
@@ -108,8 +112,16 @@ export default {
         const quality = String(body?.quality ?? 'best');
         if (!url || !['youtube', 'bilibili', 'instagram'].includes(source) || !sourceMatches(url, source)
           || !(FORMATS[mode] as readonly string[]).includes(format) || !QUALITIES.includes(quality)) return json({ error: 'invalid' }, 400);
-        const hostname = new URL(origin).hostname;
-        if (!await verifyTurnstile(env.TURNSTILE_SECRET, String(body?.cf_token ?? ''), req.headers.get('CF-Connecting-IP') ?? '', hostname)) return json({ error: 'captcha' }, 403);
+        const ip = req.headers.get('CF-Connecting-IP') ?? '';
+        const v2Token = String(body?.v2_token ?? '');
+        if (v2Token) {
+          const v2 = await verifyRecaptcha(env.RECAPTCHA_V2_SECRET, v2Token, ip);
+          if (v2?.success !== true || (v2.hostname && v2.hostname !== hostname)) return json({ error: 'captcha' }, 403);
+        } else {
+          const v3 = await verifyRecaptcha(env.RECAPTCHA_V3_SECRET, String(body?.v3_token ?? ''), ip);
+          if (v3?.success !== true || v3.action !== 'download' || (v3.score ?? 0) < 0.7
+            || (v3.hostname && v3.hostname !== hostname)) return json({ error: 'need_v2' }, 403);
+        }
         const jobId = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
         const response = await gh('/actions/workflows/download.yml/dispatches', {
           method: 'POST',
@@ -122,7 +134,7 @@ export default {
       if (req.method === 'GET' && match) {
         const id = match[1];
         return json(await cached(`job:${id}`, 4000, async () => {
-          const runsResponse = await gh(`/actions/workflows/download.yml/runs?event=workflow_dispatch&per_page=40`);
+          const runsResponse = await gh('/actions/workflows/download.yml/runs?event=workflow_dispatch&per_page=40');
           if (!runsResponse.ok) throw new Error('runs');
           const runs = await runsResponse.json() as { workflow_runs?: Array<any> };
           const run = runs.workflow_runs?.find((item) => item.name === `job ${id}`);
