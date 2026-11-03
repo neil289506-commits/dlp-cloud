@@ -9,8 +9,8 @@ const I18N = {
     s1: '準備工具（yt-dlp、ffmpeg、ffprobe）', s2: '下載與轉檔', s3: '打包上傳', s4: '完成，可以下載',
     note: '請只下載你有權下載的內容。檔案會在數小時後自動刪除。',
     errInvalid: '不支援這個連結，或連結與所選來源不符。',
-    errCaptchaLoad: 'reCAPTCHA 尚未載入，請重新整理頁面或稍後再試。',
-    errCaptcha: '請先完成人機驗證。', errNeedV2: '請完成下方「我不是機器人」驗證後再按一次。',
+    errCaptchaLoad: 'Cloudflare 人機驗證尚未載入，請重新整理頁面或稍後再試。',
+    errCaptcha: '請先完成人機驗證。',
     expired: '檔案已過期並被刪除，請重新下載。',
     errServer: '無法啟動任務，請稍後再試。', errTimeout: '等待逾時，請稍後再試。',
     failed: '下載失敗。可能是影片不可用、需要登入，或網站擋掉了雲端主機。', logs: '查看執行紀錄', other: 'English',
@@ -25,8 +25,8 @@ const I18N = {
     s1: 'Prepare tools (yt-dlp, ffmpeg, ffprobe)', s2: 'Download and convert', s3: 'Package and upload', s4: 'Done, ready to download',
     note: 'Only download content you have the right to download. Files are deleted automatically after a few hours.',
     errInvalid: 'Unsupported link, or the link does not match the selected source.',
-    errCaptchaLoad: 'reCAPTCHA has not loaded. Refresh the page and try again.',
-    errCaptcha: 'Please complete the human check first.', errNeedV2: 'Complete the "I am not a robot" check below, then press Download again.',
+    errCaptchaLoad: 'The Cloudflare human check has not loaded. Refresh the page and try again.',
+    errCaptcha: 'Please complete the human check first.',
     expired: 'The file has expired and was deleted. Please download again.',
     errServer: 'Could not start the job. Please try again later.', errTimeout: 'Timed out. Please try again later.',
     failed: 'Download failed. The video may be unavailable, need a login, or the site blocked the cloud runner.', logs: 'View run log', other: '中文',
@@ -35,59 +35,24 @@ const I18N = {
 const FORMATS = { video: ['mp4', 'mkv', 'webm'], audio: ['mp3', 'm4a', 'opus', 'flac', 'wav'] };
 const $ = (id) => document.getElementById(id);
 const form = $('form'), source = $('source'), fmt = $('format'), go = $('go'), err = $('err');
-let timer = null, lang = 'zh', failedState = null, v3Token = '', v2Token = '', v2Id = null, v2Needed = false;
-let recaptchaLoaded = false, v2RenderPromise = null;
+let timer = null, lang = 'zh', failedState = null, tsToken = '', tsId = null;
 
 try { lang = localStorage.getItem('lang') || ((navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en'); } catch {}
 const t = (key) => I18N[lang][key];
 
-function recaptchaReady() {
-  if (typeof grecaptcha !== 'undefined' && typeof grecaptcha.ready === 'function') recaptchaLoaded = true;
-  return recaptchaLoaded;
-}
-window.onRecaptchaLoad = () => {
-  recaptchaLoaded = true;
-  if (v2Needed) renderV2();
+window.onTs = () => {
+  if (!window.turnstile || tsId !== null) return;
+  tsId = turnstile.render('#ts', {
+    sitekey: window.TURNSTILE_SITE_KEY,
+    theme: 'auto',
+    callback: (token) => { tsToken = token; },
+    'expired-callback': () => { tsToken = ''; },
+    'error-callback': () => { tsToken = ''; },
+  });
 };
-function renderV2() {
-  if (v2Id !== null) return Promise.resolve();
-  if (v2RenderPromise) return v2RenderPromise;
-  v2RenderPromise = new Promise((resolve, reject) => {
-    grecaptcha.ready(() => {
-      try {
-        v2Id = grecaptcha.render('rc2', {
-          sitekey: window.RECAPTCHA_V2_SITE_KEY,
-          theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
-          callback: (token) => { v2Token = token; },
-          'expired-callback': () => { v2Token = ''; },
-          'error-callback': () => { v2Token = ''; },
-        });
-        resolve();
-      } catch (error) {
-        v2RenderPromise = null;
-        reject(error);
-      }
-    });
-  });
-}
-function showV2() {
-  v2Needed = true;
-  $('rc2').hidden = false;
-  if (recaptchaReady()) renderV2().catch(() => fail('errCaptchaLoad'));
-}
-function executeV3() {
-  return new Promise((resolve, reject) => {
-    grecaptcha.ready(() => {
-      grecaptcha.execute(window.RECAPTCHA_V3_SITE_KEY, { action: 'download' }).then(resolve, reject);
-    });
-  });
-}
 function resetCaptcha() {
-  v3Token = '';
-  if (v2Token && v2Id !== null && recaptchaReady()) {
-    v2Token = '';
-    grecaptcha.reset(v2Id);
-  }
+  tsToken = '';
+  if (tsId !== null && window.turnstile) turnstile.reset(tsId);
 }
 function applyLang() {
   document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';
@@ -154,28 +119,23 @@ function poll(jobId, started) {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   err.hidden = true; err.dataset.key = ''; failedState = null; $('result').innerHTML = '';
-  if (!recaptchaReady()) { showV2(); fail('errCaptchaLoad'); return; }
-  if (v2Needed && !v2Token) { fail('errCaptcha'); return; }
+  if (typeof turnstile === 'undefined') { fail('errCaptchaLoad'); return; }
+  if (!tsToken) { fail('errCaptcha'); return; }
   go.disabled = true;
   try {
-    if (!v2Needed) {
-      v3Token = await executeV3();
-    }
     const { jobId } = await api('/api/jobs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url: $('url').value.trim(), source: source.value, mode: form.mode.value, format: fmt.value,
         quality: $('quality').value, playlist: $('playlist').checked,
-        ...(v2Needed ? { v2_token: v2Token } : { v3_token: v3Token }),
+        cf_token: tsToken,
       }),
     });
     $('job').hidden = false; showStage(0);
     $('job').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     poll(jobId, Date.now());
   } catch (x) {
-    if (x.code === 'need_v2') { showV2(); fail('errNeedV2'); }
-    else if (!v2Needed) { showV2(); fail('errNeedV2'); }
-    else fail(x.status === 400 ? 'errInvalid' : x.status === 403 ? 'errCaptcha' : 'errServer');
+    fail(x.status === 400 ? 'errInvalid' : x.status === 403 ? 'errCaptcha' : 'errServer');
   } finally {
     resetCaptcha();
   }

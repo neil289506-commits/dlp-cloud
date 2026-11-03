@@ -3,8 +3,7 @@ interface Env {
   GH_REPO: string;
   ALLOWED_ORIGIN: string;
   GH_TOKEN?: string;
-  RECAPTCHA_V3_SECRET: string;
-  RECAPTCHA_V2_SECRET: string;
+  TURNSTILE_SECRET: string;
 }
 
 const FORMATS = { video: ['mp4', 'mkv', 'webm'], audio: ['mp3', 'm4a', 'opus', 'flac', 'wav'] } as const;
@@ -65,14 +64,14 @@ async function cached<T>(key: string, ttl: number, fn: () => Promise<T>): Promis
   memo.set(key, { t: Date.now(), v: value });
   return value;
 }
-type RecaptchaVerdict = { success?: boolean; score?: number; action?: string; hostname?: string };
-async function verifyRecaptcha(secret: string, token: string, ip: string): Promise<RecaptchaVerdict | null> {
-  if (!token) return null;
+async function verifyTurnstile(secret: string, token: string, ip: string, hostname: string): Promise<boolean> {
+  if (!token) return false;
   const body = new URLSearchParams({ secret, response: token });
   if (ip) body.set('remoteip', ip);
-  const response = await fetch('https://www.google.com/recaptcha/api/siteverify', { method: 'POST', body });
-  if (!response.ok) return null;
-  return await response.json() as RecaptchaVerdict;
+  const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body });
+  if (!response.ok) return false;
+  const result = await response.json() as { success?: boolean; hostname?: string };
+  return result.success === true && (!result.hostname || result.hostname === hostname);
 }
 
 export default {
@@ -113,15 +112,7 @@ export default {
         if (!url || !['youtube', 'bilibili', 'instagram'].includes(source) || !sourceMatches(url, source)
           || !(FORMATS[mode] as readonly string[]).includes(format) || !QUALITIES.includes(quality)) return json({ error: 'invalid' }, 400);
         const ip = req.headers.get('CF-Connecting-IP') ?? '';
-        const v2Token = String(body?.v2_token ?? '');
-        if (v2Token) {
-          const v2 = await verifyRecaptcha(env.RECAPTCHA_V2_SECRET, v2Token, ip);
-          if (v2?.success !== true || (v2.hostname && v2.hostname !== hostname)) return json({ error: 'captcha' }, 403);
-        } else {
-          const v3 = await verifyRecaptcha(env.RECAPTCHA_V3_SECRET, String(body?.v3_token ?? ''), ip);
-          if (v3?.success !== true || v3.action !== 'download' || (v3.score ?? 0) < 0.7
-            || (v3.hostname && v3.hostname !== hostname)) return json({ error: 'need_v2' }, 403);
-        }
+        if (!await verifyTurnstile(env.TURNSTILE_SECRET, String(body?.cf_token ?? ''), ip, hostname)) return json({ error: 'captcha' }, 403);
         const jobId = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
         const response = await gh('/actions/workflows/download.yml/dispatches', {
           method: 'POST',
