@@ -106,6 +106,7 @@ export default {
       'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       Vary: 'Origin',
+      ｝
 interface Env { GH_TOKEN: string; GH_REPO: string; ALLOWED_ORIGIN: string; TURNSTILE_SECRET: string }
 
 async function verifyTurnstile(token: string, secret: string, ip: string | null): Promise<boolean> {
